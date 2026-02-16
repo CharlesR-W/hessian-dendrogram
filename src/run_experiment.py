@@ -30,7 +30,7 @@ def run(
     lr: float = 0.01,
     momentum: float = 0.9,
     batch_size: int = 128,
-    hessian_n_samples: int = 1000,
+    hessian_n_samples: int = 50,
     n_save_vectors: int = 50,
     seed: int = 42,
     results_dir: str = "results",

@@ -51,33 +51,25 @@ def compute_eigenspectrum(
     return evals, saved_evecs
 
 
-def compute_model_hessian(
+def _make_loss_fn(
     model: torch.nn.Module,
     data: torch.Tensor,
     targets: torch.Tensor,
-) -> torch.Tensor:
-    """Compute full Hessian of cross-entropy loss for a model on given data.
+) -> tuple[callable, torch.Tensor]:
+    """Create a loss function mapping flat params -> scalar, for Hessian computation.
 
-    Args:
-        model: Neural network (will be put in eval mode).
-        data: Input tensor (N, C, H, W).
-        targets: Target labels (N,).
-
-    Returns:
-        P x P Hessian matrix where P = number of model parameters.
+    Returns (loss_fn, flat_params) where flat_params is detached float64.
     """
     model.eval()
-
-    # Snapshot parameter shapes and names for reconstruction
     param_shapes = {name: p.shape for name, p in model.named_parameters()}
     param_names = list(param_shapes.keys())
 
-    # Flatten current parameters
     flat_params = torch.nn.utils.parameters_to_vector(model.parameters())
     flat_params = flat_params.detach().double().requires_grad_(True)
 
+    data_f64 = data.double()
+
     def loss_fn(flat_p):
-        # Reconstruct parameter dict from flat vector
         param_dict = {}
         offset = 0
         for name in param_names:
@@ -87,10 +79,52 @@ def compute_model_hessian(
                 numel *= s
             param_dict[name] = flat_p[offset:offset + numel].view(shape)
             offset += numel
-
-        # Run model with these parameters
-        out = torch.func.functional_call(model, param_dict, (data.double(),))
+        out = torch.func.functional_call(model, param_dict, (data_f64,))
         return torch.nn.functional.cross_entropy(out, targets)
 
-    H = torch.func.hessian(loss_fn)(flat_params)
-    return H.detach().cpu().double()
+    return loss_fn, flat_params
+
+
+def compute_model_hessian(
+    model: torch.nn.Module,
+    data: torch.Tensor,
+    targets: torch.Tensor,
+    hvp_batch_size: int = 64,
+) -> torch.Tensor:
+    """Compute full Hessian of cross-entropy loss for a model on given data.
+
+    Uses batched Hessian-vector products via vmap(jvp(grad)). This avoids
+    the OOM of torch.func.hessian (which vmaps over all N directions at once)
+    by processing hvp_batch_size directions at a time.
+
+    Args:
+        model: Neural network (will be put in eval mode).
+        data: Input tensor (N, C, H, W).
+        targets: Target labels (N,).
+        hvp_batch_size: Number of HVP directions to process in parallel.
+            Higher = faster but more memory. 64 is a safe default.
+
+    Returns:
+        P x P Hessian matrix where P = number of model parameters.
+    """
+    loss_fn, flat_params = _make_loss_fn(model, data, targets)
+    N = flat_params.shape[0]
+
+    grad_fn = torch.func.grad(loss_fn)
+
+    def hvp_single(v):
+        return torch.func.jvp(grad_fn, (flat_params,), (v,))[1]
+
+    batched_hvp = torch.vmap(hvp_single)
+
+    H = torch.zeros(N, N, dtype=torch.float64)
+    for start in range(0, N, hvp_batch_size):
+        end = min(start + hvp_batch_size, N)
+        basis = torch.zeros(end - start, N, dtype=torch.float64)
+        for j in range(end - start):
+            basis[j, start + j] = 1.0
+        H[start:end] = batched_hvp(basis).detach()
+
+    # Symmetrize (numerical errors can make it slightly asymmetric)
+    H = (H + H.T) / 2
+    return H
