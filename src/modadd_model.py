@@ -14,7 +14,7 @@ class ModAddTransformer(nn.Module):
     No layer norm, no MLP, no bias. Designed for full Hessian computation.
     """
 
-    def __init__(self, p: int = 113, d_model: int = 32, n_heads: int = 1):
+    def __init__(self, p: int = 113, d_model: int = 128, n_heads: int = 4):
         super().__init__()
         self.p = p
         self.d_model = d_model

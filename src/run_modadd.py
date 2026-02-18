@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from src.modadd_model import ModAddTransformer
 from src.modadd_train import make_modadd_data, train_modadd
-from src.hessian import compute_model_hessian, compute_eigenspectrum
+from src.hessian import compute_model_hessian, compute_eigenspectrum, compute_lanczos_eigenspectrum
 from src.visualize import (
     plot_spectrum_evolution,
     plot_dendrogram_snapshots,
@@ -20,13 +20,14 @@ from src.visualize import (
 
 def run(
     p: int = 113,
-    d_model: int = 32,
-    n_heads: int = 1,
-    n_steps: int = 40000,
+    d_model: int = 128,
+    n_heads: int = 4,
+    n_steps: int = 50000,
     lr: float = 1e-3,
     weight_decay: float = 1.0,
     train_fraction: float = 0.3,
     hessian_n_samples: int = 200,
+    lanczos_k: int = 200,
     n_save_vectors: int = 50,
     seed: int = 42,
     results_dir: str = "results_modadd",
@@ -80,13 +81,26 @@ def run(
     hessian_targets = train_lab[sub_idx]
     print(f"Hessian subsample: {n_sub} training pairs")
 
+    n_params = sum(p_.numel() for p_ in model.parameters())
+    use_lanczos = n_params > 20000
+    if use_lanczos:
+        print(f"Using Lanczos (k={lanczos_k}) — model has {n_params} params")
+    else:
+        print(f"Using full Hessian — model has {n_params} params")
+
     spectra = []
     for ckpt in tqdm(checkpoint_results, desc="Computing Hessian spectra"):
         state_dict = torch.load(ckpt["state_dict_path"], weights_only=True)
         model.load_state_dict(state_dict)
 
-        H = compute_model_hessian(model, hessian_data, hessian_targets)
-        eigenvalues, eigenvectors = compute_eigenspectrum(H, n_save_vectors=n_save_vectors)
+        if use_lanczos:
+            eigenvalues, eigenvectors = compute_lanczos_eigenspectrum(
+                model, hessian_data, hessian_targets,
+                k=lanczos_k, n_save_vectors=n_save_vectors,
+            )
+        else:
+            H = compute_model_hessian(model, hessian_data, hessian_targets)
+            eigenvalues, eigenvectors = compute_eigenspectrum(H, n_save_vectors=n_save_vectors)
 
         spec_path = spectra_dir / f"step_{ckpt['step']:06d}.npz"
         np.savez(
@@ -104,8 +118,8 @@ def run(
         })
 
         n_neg = np.sum(eigenvalues < 0)
-        print(f"  Step {ckpt['step']:6d}: {n_neg} negative eigenvalues, "
-              f"range [{eigenvalues.min():.2f}, {eigenvalues.max():.2f}]")
+        print(f"  Step {ckpt['step']:6d}: {len(eigenvalues)} eigenvalues, "
+              f"{n_neg} negative, range [{eigenvalues.min():.2f}, {eigenvalues.max():.2f}]")
 
     # ---- Phase 3: Visualize ----
     print("\n" + "=" * 60)

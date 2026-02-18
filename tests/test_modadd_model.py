@@ -3,12 +3,12 @@ from src.modadd_model import ModAddTransformer
 
 
 def test_default_param_count():
-    """d_model=32, p=113 should give ~11,456 parameters."""
-    model = ModAddTransformer(p=113, d_model=32)
+    """d_model=128, n_heads=4, p=113 should give 94,976 parameters."""
+    model = ModAddTransformer()
     n_params = sum(p.numel() for p in model.parameters())
-    # token_embed: 114*32=3648, pos_embed: 3*32=96
-    # W_Q,W_K,W_V,W_O: 4*32*32=4096, unembed: 32*113=3616
-    assert n_params == 11456, f"Expected 11456 params, got {n_params}"
+    # token_embed: 114*128=14592, pos_embed: 3*128=384
+    # W_Q,W_K,W_V,W_O: 4*128*128=65536, unembed: 128*113=14464
+    assert n_params == 94976, f"Expected 94976 params, got {n_params}"
 
 
 def test_output_shape():

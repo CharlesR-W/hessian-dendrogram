@@ -1,8 +1,9 @@
-"""Full Hessian computation and eigendecomposition for small neural networks."""
+"""Hessian eigenspectrum computation: full for small models, Lanczos for large."""
 
 import torch
 import numpy as np
 from numpy.typing import NDArray
+from scipy.sparse.linalg import LinearOperator, eigsh
 
 
 def compute_hessian(fn: callable, params: torch.Tensor) -> torch.Tensor:
@@ -128,3 +129,61 @@ def compute_model_hessian(
     # Symmetrize (numerical errors can make it slightly asymmetric)
     H = (H + H.T) / 2
     return H
+
+
+def compute_lanczos_eigenspectrum(
+    model: torch.nn.Module,
+    data: torch.Tensor,
+    targets: torch.Tensor,
+    k: int = 200,
+    n_save_vectors: int = 50,
+) -> tuple[NDArray, NDArray]:
+    """Compute top-k and bottom-k Hessian eigenvalues via Lanczos iteration.
+
+    Uses Hessian-vector products (never forms the full matrix), so this scales
+    to models with 100K+ parameters where the full Hessian would be infeasible.
+
+    Returns eigenvalues sorted ascending (bottom-k concatenated with top-k,
+    deduplicated), and the corresponding eigenvectors for the extremes.
+    """
+    loss_fn, flat_params = _make_loss_fn(model, data, targets)
+    N = flat_params.shape[0]
+    grad_fn = torch.func.grad(loss_fn)
+
+    def hvp(v_np):
+        v = torch.from_numpy(v_np).double()
+        hv = torch.func.jvp(grad_fn, (flat_params,), (v,))[1]
+        return hv.detach().numpy()
+
+    H_op = LinearOperator((N, N), matvec=hvp, dtype=np.float64)
+
+    actual_k = min(k, N // 2 - 1)
+
+    # Largest eigenvalues
+    evals_top, evecs_top = eigsh(H_op, k=actual_k, which='LA', tol=1e-6)
+    # Smallest (most negative) eigenvalues
+    evals_bot, evecs_bot = eigsh(H_op, k=actual_k, which='SA', tol=1e-6)
+
+    # Combine and deduplicate
+    all_evals = np.concatenate([evals_bot, evals_top])
+    all_evecs = np.concatenate([evecs_bot, evecs_top], axis=1)
+    order = np.argsort(all_evals)
+    all_evals = all_evals[order]
+    all_evecs = all_evecs[:, order]
+
+    # Deduplicate close eigenvalues (Lanczos may find overlapping sets)
+    mask = np.ones(len(all_evals), dtype=bool)
+    for i in range(1, len(all_evals)):
+        if abs(all_evals[i] - all_evals[i - 1]) < 1e-8 * (abs(all_evals[i]) + 1):
+            mask[i] = False
+    all_evals = all_evals[mask]
+    all_evecs = all_evecs[:, mask]
+
+    # Save extreme eigenvectors
+    sv = min(n_save_vectors, len(all_evals) // 2)
+    if 2 * sv >= len(all_evals):
+        saved_evecs = all_evecs
+    else:
+        saved_evecs = np.concatenate([all_evecs[:, :sv], all_evecs[:, -sv:]], axis=1)
+
+    return all_evals, saved_evecs
