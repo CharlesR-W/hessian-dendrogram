@@ -42,13 +42,15 @@ def make_modadd_data(
 
 
 def get_modadd_checkpoint_steps(n_steps: int) -> list[int]:
-    """Checkpoint schedule for grokking: dense early + around transition.
+    """Checkpoint schedule for grokking: dense early, moderate mid, sparse late.
 
-    ~30 checkpoints for a 40K step run.
+    ~35 checkpoints for a 150K step run.
     """
     steps = {0, 50, 100, 500}
-    steps.update(range(1000, min(10001, n_steps + 1), 1000))
-    steps.update(range(10000, n_steps + 1, 2000))
+    steps.update(range(1000, min(5001, n_steps + 1), 1000))
+    steps.update(range(5000, min(20001, n_steps + 1), 2500))
+    steps.update(range(20000, min(80001, n_steps + 1), 5000))
+    steps.update(range(80000, n_steps + 1, 10000))
     steps.add(n_steps)
     return sorted(s for s in steps if s <= n_steps)
 

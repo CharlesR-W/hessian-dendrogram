@@ -56,19 +56,21 @@ def _make_loss_fn(
     model: torch.nn.Module,
     data: torch.Tensor,
     targets: torch.Tensor,
+    dtype: torch.dtype = torch.float64,
 ) -> tuple[callable, torch.Tensor]:
     """Create a loss function mapping flat params -> scalar, for Hessian computation.
 
-    Returns (loss_fn, flat_params) where flat_params is detached float64.
+    Returns (loss_fn, flat_params) where flat_params is detached with given dtype.
+    Use float64 for full Hessian (accuracy), float32 for Lanczos (speed).
     """
     model.eval()
     param_shapes = {name: p.shape for name, p in model.named_parameters()}
     param_names = list(param_shapes.keys())
 
     flat_params = torch.nn.utils.parameters_to_vector(model.parameters())
-    flat_params = flat_params.detach().double().requires_grad_(True)
+    flat_params = flat_params.detach().to(dtype).requires_grad_(True)
 
-    data_f64 = data.double() if data.is_floating_point() else data
+    data_cast = data.to(dtype) if data.is_floating_point() else data
 
     def loss_fn(flat_p):
         param_dict = {}
@@ -80,7 +82,7 @@ def _make_loss_fn(
                 numel *= s
             param_dict[name] = flat_p[offset:offset + numel].view(shape)
             offset += numel
-        out = torch.func.functional_call(model, param_dict, (data_f64,))
+        out = torch.func.functional_call(model, param_dict, (data_cast,))
         return torch.nn.functional.cross_entropy(out, targets)
 
     return loss_fn, flat_params
@@ -135,49 +137,42 @@ def compute_lanczos_eigenspectrum(
     model: torch.nn.Module,
     data: torch.Tensor,
     targets: torch.Tensor,
-    k: int = 200,
+    k: int = 50,
     n_save_vectors: int = 50,
+    tol: float = 1e-3,
+    maxiter: int = 300,
 ) -> tuple[NDArray, NDArray]:
-    """Compute top-k and bottom-k Hessian eigenvalues via Lanczos iteration.
+    """Compute top-k Hessian eigenvalues via Lanczos iteration.
 
-    Uses Hessian-vector products (never forms the full matrix), so this scales
-    to models with 100K+ parameters where the full Hessian would be infeasible.
+    Uses Hessian-vector products in float32 (never forms the full matrix),
+    so this scales to models with 100K+ parameters.
 
-    Returns eigenvalues sorted ascending (bottom-k concatenated with top-k,
-    deduplicated), and the corresponding eigenvectors for the extremes.
+    Only computes the largest eigenvalues (positive outliers).  The near-zero
+    bulk and small negative eigenvalues are not resolved — for dendrogram
+    analysis, the outlier structure contains the interesting spectral gaps.
+
+    Returns eigenvalues sorted ascending and corresponding eigenvectors.
     """
-    loss_fn, flat_params = _make_loss_fn(model, data, targets)
+    loss_fn, flat_params = _make_loss_fn(model, data, targets, dtype=torch.float32)
     N = flat_params.shape[0]
     grad_fn = torch.func.grad(loss_fn)
 
     def hvp(v_np):
-        v = torch.from_numpy(v_np).double()
+        v = torch.from_numpy(v_np).float()
         hv = torch.func.jvp(grad_fn, (flat_params,), (v,))[1]
-        return hv.detach().numpy()
+        return hv.detach().numpy().astype(np.float64)
 
     H_op = LinearOperator((N, N), matvec=hvp, dtype=np.float64)
 
     actual_k = min(k, N // 2 - 1)
 
-    # Largest eigenvalues
-    evals_top, evecs_top = eigsh(H_op, k=actual_k, which='LA', tol=1e-6)
-    # Smallest (most negative) eigenvalues
-    evals_bot, evecs_bot = eigsh(H_op, k=actual_k, which='SA', tol=1e-6)
+    # Top-k eigenvalues (the outliers that define spectral structure)
+    all_evals, all_evecs = eigsh(H_op, k=actual_k, which='LA',
+                                  tol=tol, maxiter=maxiter)
 
-    # Combine and deduplicate
-    all_evals = np.concatenate([evals_bot, evals_top])
-    all_evecs = np.concatenate([evecs_bot, evecs_top], axis=1)
     order = np.argsort(all_evals)
     all_evals = all_evals[order]
     all_evecs = all_evecs[:, order]
-
-    # Deduplicate close eigenvalues (Lanczos may find overlapping sets)
-    mask = np.ones(len(all_evals), dtype=bool)
-    for i in range(1, len(all_evals)):
-        if abs(all_evals[i] - all_evals[i - 1]) < 1e-8 * (abs(all_evals[i]) + 1):
-            mask[i] = False
-    all_evals = all_evals[mask]
-    all_evecs = all_evecs[:, mask]
 
     # Save extreme eigenvectors
     sv = min(n_save_vectors, len(all_evals) // 2)

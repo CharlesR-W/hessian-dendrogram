@@ -28,12 +28,12 @@ def test_data_deterministic():
 
 
 def test_checkpoint_steps():
-    steps = get_modadd_checkpoint_steps(n_steps=40000)
+    steps = get_modadd_checkpoint_steps(n_steps=150000)
     assert 0 in steps
-    assert 40000 in steps
+    assert 150000 in steps
     assert steps == sorted(set(steps))
-    # Should have 25-60 checkpoints
-    assert 20 <= len(steps) <= 80, f"Got {len(steps)} checkpoints"
+    # Should have 30-50 checkpoints for 150K steps
+    assert 25 <= len(steps) <= 50, f"Got {len(steps)} checkpoints"
 
 
 def test_train_smoke(tmp_path):
