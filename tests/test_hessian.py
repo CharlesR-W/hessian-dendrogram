@@ -46,6 +46,31 @@ def test_eigenspectrum_sorted():
     assert np.all(np.diff(eigenvalues) >= -1e-12), "Eigenvalues not sorted"
 
 
+def test_hessian_with_integer_inputs():
+    """Hessian computation must work when data is integer (e.g. token indices)."""
+    import torch.nn as nn
+
+    class TinyEmbedModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(5, 3)
+            self.linear = nn.Linear(3, 5, bias=False)
+
+        def forward(self, x):
+            return self.linear(self.embed(x).mean(dim=-2))
+
+    model = TinyEmbedModel()
+    data = torch.tensor([[0, 1], [2, 3]])  # integer tokens
+    targets = torch.tensor([4, 2])
+
+    H = compute_model_hessian(model, data, targets)
+
+    n_params = sum(p.numel() for p in model.parameters())
+    assert H.shape == (n_params, n_params)
+    # Must be symmetric
+    assert torch.allclose(H, H.T, atol=1e-6)
+
+
 def test_model_hessian_shape():
     """Hessian of LeNet-tiny has the right shape and is symmetric."""
     from src.model import LeNetTiny

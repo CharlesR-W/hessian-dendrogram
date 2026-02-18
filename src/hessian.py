@@ -67,7 +67,7 @@ def _make_loss_fn(
     flat_params = torch.nn.utils.parameters_to_vector(model.parameters())
     flat_params = flat_params.detach().double().requires_grad_(True)
 
-    data_f64 = data.double()
+    data_f64 = data.double() if data.is_floating_point() else data
 
     def loss_fn(flat_p):
         param_dict = {}
