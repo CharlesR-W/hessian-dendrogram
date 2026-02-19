@@ -66,7 +66,8 @@ def plot_dendrogram_snapshots(
         Z = build_dendrogram(spec["eigenvalues"])
         if Z.shape[0] > 0:
             dendrogram(Z, ax=ax, no_labels=True, color_threshold=0)
-        ax.set_title(f"Step {spec['step']}\n(epoch {spec['epoch']:.1f})", fontsize=9)
+        epoch_str = f" (epoch {spec['epoch']:.1f})" if 'epoch' in spec else ""
+        ax.set_title(f"Step {spec['step']}{epoch_str}", fontsize=9)
         ax.set_ylabel("Gap size (ε)")
 
     fig.suptitle("Dendrogram Evolution", fontsize=12)

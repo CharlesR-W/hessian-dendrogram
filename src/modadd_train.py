@@ -84,7 +84,8 @@ def train_modadd(
         p=p, train_fraction=train_fraction, seed=seed,
     )
 
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay,
+                            betas=(0.9, 0.98))
     criterion = nn.CrossEntropyLoss()
     checkpoint_steps = set(get_modadd_checkpoint_steps(n_steps))
     results = []
