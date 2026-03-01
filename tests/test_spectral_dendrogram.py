@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from src.spectral_dendrogram import fiedler_split
 
 
