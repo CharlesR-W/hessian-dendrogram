@@ -1,86 +1,87 @@
 # Hessian Dendrograms
 
-**Tracking circuit formation in neural networks through Hessian eigenspectrum analysis.**
+**Companion code for [A Diachronic View of Circuits](https://crw.dev/posts/A-Diachronic-View-of-Circuits/).**
 
-The loss landscape Hessian encodes how a network's learned representations are structured.  By computing the full eigenspectrum at checkpoints throughout training, we can build *spectral dendrograms* — hierarchical clusterings of eigenvalues that reveal when and how distinct computational circuits emerge.
+Tracks circuit formation in neural networks through Hessian eigenspectrum analysis during training.  The core idea: coarse-grain the Hessian eigenvalues at resolution $\varepsilon$, build a dendrogram from the resulting clusters, and watch spectral gaps appear as circuits emerge.
 
-## Key idea
-
-Coarse-grain the Hessian eigenvalues at resolution $\varepsilon$: eigenvalues differing by less than $\varepsilon$ are grouped into the same cluster.  As $\varepsilon$ increases, clusters merge — producing a dendrogram whose branch points correspond to spectral gaps separating distinct curvature scales in the loss landscape.
-
-**Physical interpretation:** A tight cluster of eigenvalues = a circuit (perturbing along any direction within the cluster costs similar loss).  A spectral gap = a boundary between circuits.  Watching dendrograms evolve over training reveals circuit formation dynamics.
+> **Research companion code.**  This repository implements the numerical experiments and visualizations for the blog post series on spectral approaches to mechanistic interpretability.  It is a work in progress - the code is functional and produces the reported results, but should be understood as research infrastructure rather than a polished library.  Developed during [MATS](https://www.matsprogram.org/) 9.0.
 
 ## Experiments
 
 ### 1. LeNet-tiny on MNIST (complete)
 
-A minimal conv-net (~6K parameters) trained on MNIST with SGD.  Full Hessian eigendecomposition at 25 checkpoints.
+A minimal conv-net (~6K parameters) trained on MNIST with SGD.  Full Hessian eigendecomposition at 25 checkpoints throughout training.
 
 - **Model:** `Conv2d(1,8,5) → ReLU → MaxPool → Conv2d(8,16,5) → ReLU → MaxPool → Linear(256,10)`
-- **Training:** SGD with momentum, 30 epochs, ~25 checkpoints
+- **Training:** SGD with momentum, 30 epochs
 - **Hessian:** Full 6K×6K matrix, all eigenvalues + top/bottom 50 eigenvectors
+- **Results:** `results/figures/` - spectrum evolution, dendrograms, cluster heatmaps, spectral gap barcodes, learned filter visualizations
 
-Results in `results/figures/` — spectrum evolution, dendrograms, cluster heatmaps, spectral gap barcodes, and learned filter visualizations.
+### 2. Modular addition grokking (complete)
 
-### 2. Modular addition grokking (in progress)
-
-A 1-layer transformer learning `a + b mod 113`, the canonical *grokking* task where models suddenly generalize long after memorizing the training set (Power et al. 2022, Nanda et al. 2023).
+A 1-layer transformer learning `a + b mod 113`, the canonical grokking task where models suddenly generalize long after memorizing (Power et al. 2022, Nanda et al. 2023).
 
 - **Model:** 1-layer transformer, d_model=128, 4 attention heads (~95K parameters)
-- **Training:** Full-batch AdamW (lr=1e-3, weight_decay=1.0), 50K steps, 30% train split
+- **Training:** Full-batch AdamW, 150K steps, 30% train split
 - **Hessian:** Lanczos iteration for top/bottom 200 eigenvalues via Hessian-vector products (full matrix would be 72GB)
+- **Results:** `results_modadd/figures/` - spectral restructuring during the grokking transition
 
-The grokking transition — memorization followed by sudden generalization — should produce dramatic spectral restructuring: the dendrogram should reorganize as the model transitions from a memorization solution to Fourier circuits computing modular arithmetic.
+### 3. Fiedler bipartition dendrograms (complete)
 
-## Visualizations
+A complementary approach: instead of clustering eigenvalues, recursively bipartition *parameters* using the Fiedler vector of the Hessian coupling graph $|H_{ij}|$.  Two parameters in the same cluster have strong second-order interactions.
 
-Interactive marimo notebooks for both experiments:
+- **Results:** `results/figures/` - Fiedler dendrograms, algebraic connectivity over training, layer composition heatmaps
+
+## Interactive visualization (marimo notebooks)
+
+The experiment pipelines produce raw data; the marimo notebooks provide interactive exploration.  These are **visualization tools**, not experiments - they load pre-computed results from `results/` and `results_modadd/`.
 
 ```bash
-# MNIST experiment
-marimo run app.py --sandbox
-
-# Modular addition grokking
-marimo run modadd_app.py --sandbox
-```
-
-Each notebook includes:
-- Eigenvalue spectrum evolution over training
-- Animated dendrogram GIFs
-- Cluster count n(ε) heatmaps (resolution × training step)
-- Top spectral gap barcodes
-- Summary statistics (loss, accuracy, trace, entropy, max eigenvalue)
-
-## Project structure
-
-```
-src/
-├── hessian.py          # Full Hessian + Lanczos eigenvalue computation
-├── dendrogram.py       # Single-linkage clustering on eigenvalues
-├── visualize.py        # Matplotlib visualization functions
-├── model.py            # LeNet-tiny (MNIST)
-├── train.py            # MNIST training loop
-├── run_experiment.py   # MNIST end-to-end pipeline
-├── modadd_model.py     # 1-layer transformer (grokking)
-├── modadd_train.py     # Modular addition data + training
-└── run_modadd.py       # Grokking end-to-end pipeline
+marimo run app.py --sandbox          # MNIST eigenspectra + dendrograms
+marimo run modadd_app.py --sandbox   # Grokking eigenspectra + dendrograms
+marimo run fiedler_app.py --sandbox  # Fiedler bipartition analysis
 ```
 
 ## Running experiments
 
 ```bash
-# Install dependencies
 uv sync
 
-# Run tests
+# Unit tests
 uv run pytest tests/ -v
 
-# Run MNIST experiment (~2 hours)
+# MNIST experiment (~2 hours: train + full Hessian at each checkpoint)
 uv run python -m src.run_experiment
 
-# Run modular addition experiment (~9 hours: training + Lanczos)
+# Grokking experiment (~9 hours: training + Lanczos at each checkpoint)
 uv run python -m src.run_modadd
+
+# Fiedler dendrograms (requires cached Hessians from MNIST experiment)
+uv run python -m src.run_fiedler
 ```
+
+## Project structure
+
+```
+src/
+├── hessian.py              # Full Hessian + Lanczos eigenvalue computation
+├── dendrogram.py           # Single-linkage clustering on eigenvalues
+├── spectral_dendrogram.py  # Fiedler bipartition + recursive parameter clustering
+├── visualize.py            # Matplotlib visualization functions
+├── model.py                # LeNet-tiny (MNIST)
+├── train.py                # MNIST training loop
+├── run_experiment.py       # MNIST end-to-end pipeline
+├── modadd_model.py         # 1-layer transformer (grokking)
+├── modadd_train.py         # Modular addition data + training
+├── run_modadd.py           # Grokking end-to-end pipeline
+└── run_fiedler.py          # Fiedler bipartition pipeline
+```
+
+## Related posts
+
+- [A Diachronic View of Circuits](https://crw.dev/posts/A-Diachronic-View-of-Circuits/) - theoretical framework for tracking circuits via Hessian spectra
+- [Toy Models of Neural Darwinism](https://crw.dev/posts/Toy-Models-of-Neural-Darwinism/) - competition dynamics between circuits
+- [The Spectral Structure of Natural Data](https://crw.dev/posts/The-Spectral-Structure-of-Natural-Data/) - data-side spectral geometry
 
 ## References
 
@@ -95,4 +96,4 @@ MIT
 
 ---
 
-*Written with Claude*
+*Developed during MATS 9.0.  Written with Claude.*
